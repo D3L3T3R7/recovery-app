@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, ActivityIndicator } from 'react-native';
 import { registerRootComponent } from 'expo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from './firebaseConfig';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, getDocs, query, orderBy } from 'firebase/firestore';
 
 function App() {
+  const [view, setView] = useState('dashboard');
   const [currentHelper, setCurrentHelper] = useState('Volunteer');
   const [nameInput, setNameInput] = useState('');
   const [isTracking, setIsTracking] = useState(false);
@@ -14,6 +15,8 @@ function App() {
   const [assistant, setAssistant] = useState('Self');
   const [painLevel, setPainLevel] = useState(5);
   const [activeTaskName, setActiveTaskName] = useState('General Exercise');
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const getName = async () => {
@@ -48,21 +51,21 @@ function App() {
     return `${mins}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // Logic to "Claim" a task and set it as the active timer target
-  const claimTask = async (taskId, taskTitle) => {
+  const fetchHistory = async () => {
+    setLoading(true);
+    setView('history');
     try {
-      const taskRef = doc(db, "recoveryLogs", taskId);
-      await setDoc(taskRef, {
-        status: "In Progress",
-        claimedBy: currentHelper,
-        lastClaimed: new Date().toISOString()
-      }, { merge: true });
-      
-      setActiveTaskName(taskTitle);
-      Alert.alert("Task Claimed", `Ready to start: ${taskTitle}`);
+      const q = query(collection(db, "sessionLogs"), orderBy("timestamp", "desc"));
+      const querySnapshot = await getDocs(q);
+      const fetchedLogs = [];
+      querySnapshot.forEach((doc) => {
+        fetchedLogs.push({ id: doc.id, ...doc.data() });
+      });
+      setLogs(fetchedLogs);
     } catch (e) {
-      Alert.alert("Error", "Could not claim task: " + e.message);
+      Alert.alert("Error", "Could not load history: " + e.message);
     }
+    setLoading(false);
   };
 
   const handleTimerAction = async () => {
@@ -71,7 +74,6 @@ function App() {
     } else {
       setIsTracking(false);
       const finalTime = formatTime(seconds);
-      
       try {
         const logRef = doc(db, "sessionLogs", `session_${Date.now()}`);
         await setDoc(logRef, {
@@ -84,92 +86,89 @@ function App() {
           durationSeconds: seconds,
           timestamp: new Date().toISOString(),
         });
-        Alert.alert("Success!", `Logged ${finalTime} for ${activeTaskName}`);
+        Alert.alert("Success!", "Session saved to history.");
         setSeconds(0);
         setSessionNotes('');
-      } catch (e) {
-        Alert.alert("Error", "Could not save: " + e.message);
-      }
+      } catch (e) { Alert.alert("Error", e.message); }
     }
   };
+
+  if (view === 'history') {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => setView('dashboard')}>
+            <Text style={styles.backButton}>← Back to Dashboard</Text>
+          </TouchableOpacity>
+          <Text style={styles.title}>Recovery History</Text>
+        </View>
+        {loading ? (
+          <ActivityIndicator size="large" color="#3498db" style={{ marginTop: 50 }} />
+        ) : (
+          <ScrollView>
+            {logs.map((log) => (
+              <View key={log.id} style={styles.historyCard}>
+                <View style={styles.historyHeader}>
+                  <Text style={styles.historyTask}>{log.taskName}</Text>
+                  <Text style={styles.historyDate}>{new Date(log.timestamp).toLocaleDateString()}</Text>
+                </View>
+                <Text style={styles.historyDetail}>⏱ Duration: {log.duration}</Text>
+                <Text style={styles.historyDetail}>👤 Helper: {log.assistant}</Text>
+                <Text style={styles.historyDetail}>🔥 Pain: {log.painLevel}/10</Text>
+                {log.notes ? <Text style={styles.historyNotes}>" {log.notes} "</Text> : null}
+              </View>
+            ))}
+            <View style={{ height: 50 }} />
+          </ScrollView>
+        )}
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Recovery Command Center</Text>
-        <Text style={styles.subtitle}>Current User: {currentHelper}</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text style={styles.title}>Command Center</Text>
+          <TouchableOpacity style={styles.historyBtn} onPress={fetchHistory}>
+            <Text style={styles.historyBtnText}>View Logs</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.subtitle}>User: {currentHelper}</Text>
       </View>
 
-      {/* SECTION 1: Claimable Tasks */}
-      <Text style={styles.sectionHeader}>Tasks to Complete</Text>
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Morning Mobility Exercises</Text>
-        <Text style={styles.cardDetail}>Goal: 15 mins of arm/wrist work</Text>
-        <TouchableOpacity 
-          style={styles.claimButton} 
-          onPress={() => claimTask('morning_mobility_001', 'Morning Mobility')}
-        >
-          <Text style={styles.buttonText}>CLAIM TASK</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* SECTION 2: Active Timer */}
       <Text style={styles.sectionHeader}>Active Session: {activeTaskName}</Text>
       <View style={[styles.card, { alignItems: 'center' }]}>
         <Text style={styles.timerText}>{formatTime(seconds)}</Text>
-        <TouchableOpacity 
-          style={[styles.timerButton, isTracking ? styles.stopBtn : styles.startBtn]} 
-          onPress={handleTimerAction}
-        >
+        <TouchableOpacity style={[styles.timerButton, isTracking ? styles.stopBtn : styles.startBtn]} onPress={handleTimerAction}>
           <Text style={styles.buttonText}>{isTracking ? "STOP & SAVE" : "START TIMER"}</Text>
         </TouchableOpacity>
       </View>
 
-      {/* SECTION 3: Details */}
       <View style={[styles.card, { marginTop: 20 }]}>
         <Text style={styles.cardTitle}>Pain Level (1-10)</Text>
         <View style={styles.painRow}>
           {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
-            <TouchableOpacity 
-              key={num}
-              style={[styles.painCircle, painLevel === num && styles.painActive]}
-              onPress={() => setPainLevel(num)}
-            >
+            <TouchableOpacity key={num} style={[styles.painCircle, painLevel === num && styles.painActive]} onPress={() => setPainLevel(num)}>
               <Text style={[styles.painText, painLevel === num && styles.painActiveText]}>{num}</Text>
             </TouchableOpacity>
           ))}
         </View>
-
-        <Text style={[styles.cardTitle, { marginTop: 20 }]}>Who is helping?</Text>
+        <Text style={styles.cardTitle}>Who is helping?</Text>
         <View style={styles.helperRow}>
-          {['Ivan', 'Mom', 'Dad', 'Self'].map((person) => (
-            <TouchableOpacity 
-              key={person}
-              style={[styles.helperChip, assistant === person && styles.helperActive]}
-              onPress={() => setAssistant(person)}
-            >
-              <Text style={[styles.helperText, assistant === person && styles.helperActiveText]}>{person}</Text>
+          {['Ivan', 'Mom', 'Dad', 'Self'].map((p) => (
+            <TouchableOpacity key={p} style={[styles.helperChip, assistant === p && styles.helperActive]} onPress={() => setAssistant(p)}>
+              <Text style={[styles.helperText, assistant === p && styles.helperActiveText]}>{p}</Text>
             </TouchableOpacity>
           ))}
         </View>
-
-        <Text style={[styles.cardTitle, { marginTop: 20 }]}>Session Notes</Text>
-        <TextInput
-          style={styles.notesInput}
-          placeholder="Notes for the therapist..."
-          multiline
-          value={sessionNotes}
-          onChangeText={setSessionNotes}
-        />
+        <TextInput style={styles.notesInput} placeholder="Session notes..." multiline value={sessionNotes} onChangeText={setSessionNotes} />
       </View>
 
-      {/* Identity Settings */}
       <View style={[styles.card, { marginTop: 20, marginBottom: 50 }]}>
         <Text style={styles.cardTitle}>Settings</Text>
-        <TextInput style={styles.input} value={nameInput} onChangeText={setNameInput} placeholder="Your name..." />
-        <TouchableOpacity style={styles.saveButton} onPress={saveName}>
-          <Text style={styles.buttonText}>Update Identity</Text>
-        </TouchableOpacity>
+        <TextInput style={styles.input} value={nameInput} onChangeText={setNameInput} />
+        <TouchableOpacity style={styles.saveButton} onPress={saveName}><Text style={styles.buttonText}>Update Name</Text></TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -178,15 +177,16 @@ function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f2f5', padding: 20 },
   header: { marginTop: 60, marginBottom: 10 },
-  title: { fontSize: 26, fontWeight: 'bold', color: '#1a2a6c' },
+  title: { fontSize: 24, fontWeight: 'bold', color: '#1a2a6c' },
   subtitle: { fontSize: 16, color: '#5d6d7e' },
-  sectionHeader: { fontSize: 18, fontWeight: 'bold', color: '#2c3e50', marginTop: 25, marginBottom: 10 },
+  backButton: { color: '#3498db', fontWeight: 'bold', marginBottom: 10 },
+  historyBtn: { backgroundColor: '#34495e', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20 },
+  historyBtnText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  sectionHeader: { fontSize: 18, fontWeight: 'bold', color: '#2c3e50', marginTop: 20, marginBottom: 10 },
   card: { backgroundColor: '#fff', padding: 20, borderRadius: 15, elevation: 4 },
-  cardTitle: { fontSize: 16, fontWeight: 'bold', color: '#2c3e50' },
-  cardDetail: { fontSize: 14, color: '#7f8c8d', marginBottom: 15 },
-  claimButton: { backgroundColor: '#3498db', padding: 12, borderRadius: 8, alignItems: 'center' },
-  timerText: { fontSize: 50, fontWeight: 'bold', marginVertical: 10, color: '#2c3e50' },
-  timerButton: { width: '100%', padding: 15, borderRadius: 10, alignItems: 'center' },
+  cardTitle: { fontSize: 16, fontWeight: 'bold', color: '#2c3e50', marginTop: 15 },
+  timerText: { fontSize: 50, fontWeight: 'bold', color: '#2c3e50' },
+  timerButton: { width: '100%', padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 10 },
   startBtn: { backgroundColor: '#2ecc71' },
   stopBtn: { backgroundColor: '#e74c3c' },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
@@ -200,9 +200,15 @@ const styles = StyleSheet.create({
   helperActive: { backgroundColor: '#3498db' },
   helperText: { color: '#7f8c8d', fontWeight: 'bold' },
   helperActiveText: { color: '#fff' },
-  notesInput: { backgroundColor: '#f9f9f9', borderRadius: 8, padding: 12, marginTop: 10, height: 60, textAlignVertical: 'top', borderWidth: 1, borderColor: '#eee' },
+  notesInput: { backgroundColor: '#f9f9f9', borderRadius: 8, padding: 12, marginTop: 15, height: 60, borderWidth: 1, borderColor: '#eee' },
   input: { borderWidth: 1, borderColor: '#dcdde1', borderRadius: 8, padding: 10, marginTop: 10, marginBottom: 10 },
-  saveButton: { backgroundColor: '#95a5a6', padding: 10, borderRadius: 8, alignItems: 'center' }
+  saveButton: { backgroundColor: '#95a5a6', padding: 10, borderRadius: 8, alignItems: 'center' },
+  historyCard: { backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 10, borderLeftWidth: 5, borderLeftColor: '#3498db', elevation: 2 },
+  historyHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
+  historyTask: { fontWeight: 'bold', fontSize: 16, color: '#2c3e50' },
+  historyDate: { fontSize: 12, color: '#95a5a6' },
+  historyDetail: { fontSize: 14, color: '#7f8c8d', marginTop: 2 },
+  historyNotes: { fontStyle: 'italic', color: '#34495e', marginTop: 8, backgroundColor: '#f9f9f9', padding: 5, borderRadius: 5 }
 });
 
 registerRootComponent(App);
