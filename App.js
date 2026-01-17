@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, ActivityIndicator, Share } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, ActivityIndicator, Share, Switch } from 'react-native';
 import { registerRootComponent } from 'expo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from './firebaseConfig';
@@ -7,48 +7,63 @@ import { doc, setDoc, collection, getDocs, query, orderBy } from 'firebase/fires
 
 function App() {
   const [view, setView] = useState('dashboard');
-  const [currentHelper, setCurrentHelper] = useState('Volunteer');
-  const [nameInput, setNameInput] = useState('');
+  const [currentHelper, setCurrentHelper] = useState('Chris');
   const [isTracking, setIsTracking] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [sessionNotes, setSessionNotes] = useState('');
-  const [assistant, setAssistant] = useState('Self');
   const [painLevel, setPainLevel] = useState(5);
-  const [activeTask, setActiveTask] = useState('Wrist Rotations');
-  const exercises = ['Wrist Rotations', 'Grip Training', 'Arm Stretches', 'Shoulder Mobility'];
+  const [sessionNotes, setSessionNotes] = useState('');
+
+  // NEW: Clinical Safety Checklist States
+  const [hardwareClicking, setHardwareClicking] = useState(false);
+  const [numbness, setNumbness] = useState(false);
+  const [wedgeIrritation, setWedgeIrritation] = useState(false);
 
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState({ avgPain: 0, totalMins: 0 });
 
   useEffect(() => {
     const getName = async () => {
-      try {
-        const storedName = await AsyncStorage.getItem('user_name');
-        if (storedName) { setCurrentHelper(storedName); setNameInput(storedName); }
-      } catch (e) { console.log(e); }
+      const storedName = await AsyncStorage.getItem('user_name');
+      if (storedName) setCurrentHelper(storedName);
     };
     getName();
   }, []);
-
-  useEffect(() => {
-    let interval = null;
-    if (isTracking) {
-      interval = setInterval(() => { setSeconds((prev) => prev + 1); }, 1000);
-    } else { clearInterval(interval); }
-    return () => clearInterval(interval);
-  }, [isTracking]);
-
-  const saveName = async () => {
-    await AsyncStorage.setItem('user_name', nameInput);
-    setCurrentHelper(nameInput);
-    Alert.alert("Saved", "Identity updated.");
-  };
 
   const formatTime = (secs) => {
     const mins = Math.floor(secs / 60);
     const s = secs % 60;
     return `${mins}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  const handleTimerAction = async () => {
+    if (!isTracking) {
+      setIsTracking(true);
+    } else {
+      setIsTracking(false);
+      try {
+        const logRef = doc(db, "sessionLogs", `session_${Date.now()}`);
+        await setDoc(logRef, {
+          user: currentHelper,
+          timestamp: new Date().toISOString(),
+          duration: formatTime(seconds),
+          durationSeconds: seconds,
+          painLevel: painLevel,
+          notes: sessionNotes,
+          // Safety Data
+          hardwareClicking,
+          numbness,
+          wedgeIrritation,
+          taskName: "Safety & Sensation Check"
+        });
+        Alert.alert("Daily Log Saved", "Safety data recorded.");
+        setSeconds(0);
+        setSessionNotes('');
+        // Reset toggles for next log
+        setHardwareClicking(false);
+        setNumbness(false);
+        setWedgeIrritation(false);
+      } catch (e) { Alert.alert("Error", e.message); }
+    }
   };
 
   const fetchHistory = async () => {
@@ -58,111 +73,45 @@ function App() {
       const q = query(collection(db, "sessionLogs"), orderBy("timestamp", "desc"));
       const querySnapshot = await getDocs(q);
       const fetchedLogs = [];
-      let totalPain = 0;
-      let totalSecs = 0;
-
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        fetchedLogs.push({ id: doc.id, ...data });
-        totalPain += data.painLevel || 0;
-        totalSecs += data.durationSeconds || 0;
-      });
-
+      querySnapshot.forEach((doc) => fetchedLogs.push({ id: doc.id, ...doc.data() }));
       setLogs(fetchedLogs);
-      if (fetchedLogs.length > 0) {
-        setStats({
-          avgPain: (totalPain / fetchedLogs.length).toFixed(1),
-          totalMins: Math.floor(totalSecs / 60)
-        });
-      }
     } catch (e) { Alert.alert("Error", e.message); }
     setLoading(false);
   };
 
-  // NEW: THE SHARING LOGIC
   const shareReport = async () => {
-    let reportText = `RECOVERY LOG: ${currentHelper}\n`;
-    reportText += `Generated on: ${new Date().toLocaleDateString()}\n`;
-    reportText += `--------------------------\n`;
-    reportText += `Avg Pain: ${stats.avgPain}/10\n`;
-    reportText += `Total Work: ${stats.totalMins} minutes\n`;
-    reportText += `--------------------------\n\n`;
-
+    let reportText = `SURGICAL RECOVERY REPORT: ${currentHelper}\n\n`;
     logs.forEach(log => {
-      reportText += `${new Date(log.timestamp).toLocaleDateString()} - ${log.taskName}\n`;
-      reportText += `Time: ${log.duration} | Pain: ${log.painLevel}/10\n`;
-      if (log.notes) reportText += `Note: "${log.notes}"\n`;
-      reportText += `\n`;
+      reportText += `${new Date(log.timestamp).toLocaleDateString()} Log:\n`;
+      reportText += `- Pain: ${log.painLevel}/10\n`;
+      reportText += `- Hardware Clicking: ${log.hardwareClicking ? 'YES' : 'No'}\n`;
+      reportText += `- Numbness/Tingling: ${log.numbness ? 'YES' : 'No'}\n`;
+      reportText += `- Note: ${log.notes || 'None'}\n\n`;
     });
-
-    try {
-      await Share.share({ message: reportText });
-    } catch (error) {
-      Alert.alert("Error sharing", error.message);
-    }
-  };
-
-  const handleTimerAction = async () => {
-    if (!isTracking) {
-      setIsTracking(true);
-    } else {
-      setIsTracking(false);
-      const finalTime = formatTime(seconds);
-      try {
-        const logRef = doc(db, "sessionLogs", `session_${Date.now()}`);
-        await setDoc(logRef, {
-          user: currentHelper,
-          taskName: activeTask,
-          assistant: assistant,
-          notes: sessionNotes,
-          painLevel: painLevel,
-          duration: finalTime,
-          durationSeconds: seconds,
-          timestamp: new Date().toISOString(),
-        });
-        Alert.alert("Success!", "Logged to your recovery trends.");
-        setSeconds(0);
-        setSessionNotes('');
-      } catch (e) { Alert.alert("Error", e.message); }
-    }
+    await Share.share({ message: reportText });
   };
 
   if (view === 'history') {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => setView('dashboard')}><Text style={styles.backButton}>← Dashboard</Text></TouchableOpacity>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={styles.title}>Recovery Trends</Text>
-            <TouchableOpacity style={styles.shareBtn} onPress={shareReport}>
-              <Text style={styles.shareBtnText}>Share Report</Text>
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity onPress={() => setView('dashboard')}><Text style={styles.backButton}>← Back</Text></TouchableOpacity>
+          <Text style={styles.title}>Recovery Logs</Text>
+          <TouchableOpacity style={styles.shareBtn} onPress={shareReport}><Text style={styles.shareBtnText}>Export</Text></TouchableOpacity>
         </View>
-
-        {loading ? <ActivityIndicator size="large" color="#3498db" /> : (
-          <ScrollView>
-            <View style={styles.statsCard}>
-              <View style={styles.statBox}>
-                <Text style={styles.statLabel}>Avg Pain</Text>
-                <Text style={styles.statValue}>{stats.avgPain}/10</Text>
-              </View>
-              <View style={[styles.statBox, { borderLeftWidth: 1, borderColor: '#eee' }]}>
-                <Text style={styles.statLabel}>Total Time</Text>
-                <Text style={styles.statValue}>{stats.totalMins}m</Text>
-              </View>
-            </View>
-
-            {logs.map((log) => (
-              <View key={log.id} style={styles.historyCard}>
-                <Text style={styles.historyTask}>{log.taskName}</Text>
-                <Text style={styles.historyDetail}>⏱ {log.duration}  |  🔥 Pain: {log.painLevel}/10</Text>
-                {log.notes ? <Text style={styles.historyNotes}>"{log.notes}"</Text> : null}
+        <ScrollView>
+          {logs.map((log) => (
+            <View key={log.id} style={styles.historyCard}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={styles.historyDate}>{new Date(log.timestamp).toLocaleDateString()}</Text>
+                <Text style={styles.historyPain}>Pain: {log.painLevel}/10</Text>
               </View>
-            ))}
-          </ScrollView>
-        )}
+              {log.hardwareClicking && <Text style={styles.warningText}>⚠️ Hardware Sensation Reported</Text>}
+              {log.numbness && <Text style={styles.warningText}>⚠️ Numbness Reported</Text>}
+              <Text style={styles.historyNotes}>{log.notes || "No notes added."}</Text>
+            </View>
+          ))}
+        </ScrollView>
       </View>
     );
   }
@@ -170,31 +119,32 @@ function App() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Text style={styles.title}>Command Center</Text>
-          <TouchableOpacity style={styles.historyBtn} onPress={fetchHistory}><Text style={styles.historyBtnText}>Trends</Text></TouchableOpacity>
+        <Text style={styles.title}>Surgical Monitor</Text>
+        <TouchableOpacity style={styles.historyBtn} onPress={fetchHistory}><Text style={styles.historyBtnText}>History</Text></TouchableOpacity>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Daily Status Check</Text>
+        <Text style={styles.timerSub}>Log your daily safety status below.</Text>
+        
+        <View style={styles.switchRow}>
+          <Text style={styles.switchLabel}>Hardware Clicking/Popping?</Text>
+          <Switch value={hardwareClicking} onValueChange={setHardwareClicking} trackColor={{ true: '#e74c3c' }} />
+        </View>
+
+        <View style={styles.switchRow}>
+          <Text style={styles.switchLabel}>Numbness or Tingling?</Text>
+          <Switch value={numbness} onValueChange={setNumbness} trackColor={{ true: '#e74c3c' }} />
+        </View>
+
+        <View style={styles.switchRow}>
+          <Text style={styles.switchLabel}>Wedge/Sling Irritation?</Text>
+          <Switch value={wedgeIrritation} onValueChange={setWedgeIrritation} trackColor={{ true: '#f39c12' }} />
         </View>
       </View>
 
-      <Text style={styles.sectionHeader}>1. Select Exercise</Text>
-      <View style={styles.helperRow}>
-        {exercises.map((ex) => (
-          <TouchableOpacity key={ex} style={[styles.helperChip, activeTask === ex && styles.activeExercise]} onPress={() => setActiveTask(ex)}>
-            <Text style={[styles.helperText, activeTask === ex && styles.helperActiveText]}>{ex}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={[styles.card, { marginTop: 15, alignItems: 'center' }]}>
-        <Text style={styles.activeTaskLabel}>Doing: {activeTask}</Text>
-        <Text style={styles.timerText}>{formatTime(seconds)}</Text>
-        <TouchableOpacity style={[styles.timerButton, isTracking ? styles.stopBtn : styles.startBtn]} onPress={handleTimerAction}>
-          <Text style={styles.buttonText}>{isTracking ? "STOP & SAVE" : "START SESSION"}</Text>
-        </TouchableOpacity>
-      </View>
-
       <View style={[styles.card, { marginTop: 20 }]}>
-        <Text style={styles.cardTitle}>Pain Level & Assistant</Text>
+        <Text style={styles.cardTitle}>Pain Level: {painLevel}/10</Text>
         <View style={styles.painRow}>
           {[1,2,3,4,5,6,7,8,9,10].map((n) => (
             <TouchableOpacity key={n} style={[styles.painCircle, painLevel === n && styles.painActive]} onPress={() => setPainLevel(n)}>
@@ -202,64 +152,54 @@ function App() {
             </TouchableOpacity>
           ))}
         </View>
-        <View style={styles.helperRow}>
-          {['Ivan', 'Mom', 'Dad', 'Self'].map((p) => (
-            <TouchableOpacity key={p} style={[styles.helperChip, assistant === p && styles.helperActive]} onPress={() => setAssistant(p)}>
-              <Text style={styles.helperText}>{p}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <TextInput style={styles.notesInput} placeholder="How did it feel?" multiline value={sessionNotes} onChangeText={setSessionNotes} />
+
+        <TextInput 
+          style={styles.notesInput} 
+          placeholder="Describe any new sensations..." 
+          multiline 
+          value={sessionNotes} 
+          onChangeText={setSessionNotes} 
+        />
+
+        <TouchableOpacity style={[styles.timerButton, isTracking ? styles.stopBtn : styles.startBtn]} onPress={handleTimerAction}>
+          <Text style={styles.buttonText}>{isTracking ? "SAVE DAILY LOG" : "START SESSION LOG"}</Text>
+        </TouchableOpacity>
       </View>
 
-      <View style={[styles.card, { marginTop: 20, marginBottom: 50 }]}>
-        <Text style={styles.cardTitle}>Update Settings</Text>
-        <TextInput style={styles.input} value={nameInput} onChangeText={setNameInput} placeholder="Your name..." />
-        <TouchableOpacity style={styles.saveButton} onPress={saveName}><Text style={styles.buttonText}>Save Identity</Text></TouchableOpacity>
-      </View>
+      <View style={{ height: 60 }} />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f0f2f5', padding: 20 },
-  header: { marginTop: 60, marginBottom: 10 },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#1a2a6c' },
-  backButton: { color: '#3498db', fontWeight: 'bold', marginBottom: 5 },
-  historyBtn: { backgroundColor: '#34495e', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20 },
-  historyBtnText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
-  shareBtn: { backgroundColor: '#27ae60', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15 },
-  shareBtnText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
-  sectionHeader: { fontSize: 16, fontWeight: 'bold', color: '#7f8c8d', marginTop: 15 },
-  card: { backgroundColor: '#fff', padding: 20, borderRadius: 15, elevation: 4 },
-  activeTaskLabel: { fontSize: 14, color: '#3498db', fontWeight: 'bold' },
-  timerText: { fontSize: 50, fontWeight: 'bold', color: '#2c3e50' },
-  timerButton: { width: '100%', padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 10 },
-  startBtn: { backgroundColor: '#2ecc71' },
-  stopBtn: { backgroundColor: '#e74c3c' },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  painRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 15 },
-  painCircle: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#f0f2f5', alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, backgroundColor: '#f4f7f6', padding: 20 },
+  header: { marginTop: 60, marginBottom: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  title: { fontSize: 22, fontWeight: 'bold', color: '#2c3e50' },
+  backButton: { color: '#3498db', fontSize: 16 },
+  card: { backgroundColor: '#fff', padding: 20, borderRadius: 12, elevation: 3 },
+  cardTitle: { fontSize: 16, fontWeight: 'bold', color: '#34495e', marginBottom: 10 },
+  timerSub: { fontSize: 12, color: '#95a5a6', marginBottom: 15 },
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  switchLabel: { fontSize: 14, color: '#2c3e50' },
+  painRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 10 },
+  painCircle: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#f0f2f5', alignItems: 'center', justifyContent: 'center' },
   painActive: { backgroundColor: '#e67e22' },
-  painText: { fontSize: 12, fontWeight: 'bold' },
+  painText: { fontSize: 11, fontWeight: 'bold' },
   painActiveText: { color: '#fff' },
-  helperRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 },
-  helperChip: { backgroundColor: '#ecf0f1', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15, marginRight: 8, marginBottom: 8 },
-  activeExercise: { backgroundColor: '#3498db' },
-  helperActive: { backgroundColor: '#95a5a6' },
-  helperActiveText: { color: '#fff' },
-  notesInput: { backgroundColor: '#f9f9f9', borderRadius: 8, padding: 10, marginTop: 10, height: 50, borderWidth: 1, borderColor: '#eee' },
-  input: { borderWidth: 1, borderColor: '#dcdde1', borderRadius: 8, padding: 10, marginVertical: 10 },
-  saveButton: { backgroundColor: '#95a5a6', padding: 10, borderRadius: 8, alignItems: 'center' },
-  statsCard: { backgroundColor: '#fff', borderRadius: 15, padding: 20, flexDirection: 'row', marginBottom: 20, elevation: 4 },
-  statBox: { flex: 1, alignItems: 'center' },
-  statLabel: { fontSize: 12, color: '#7f8c8d', textTransform: 'uppercase' },
-  statValue: { fontSize: 24, fontWeight: 'bold', color: '#2c3e50' },
-  historyCard: { backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 10, borderLeftWidth: 5, borderLeftColor: '#3498db' },
-  historyTask: { fontWeight: 'bold', fontSize: 16 },
-  historyDetail: { color: '#7f8c8d', marginTop: 4 },
-  historyNotes: { fontStyle: 'italic', marginTop: 5, color: '#555', backgroundColor: '#f9f9f9', padding: 5 },
-  historyDate: { fontSize: 10, color: '#bdc3c7', marginTop: 8, textAlign: 'right' }
+  notesInput: { backgroundColor: '#f9f9f9', borderRadius: 8, padding: 12, height: 80, borderWidth: 1, borderColor: '#eee', marginBottom: 20 },
+  timerButton: { padding: 15, borderRadius: 10, alignItems: 'center' },
+  startBtn: { backgroundColor: '#3498db' },
+  stopBtn: { backgroundColor: '#2ecc71' },
+  buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  historyBtn: { backgroundColor: '#34495e', padding: 8, borderRadius: 8 },
+  historyBtnText: { color: '#fff', fontSize: 12 },
+  shareBtn: { backgroundColor: '#27ae60', padding: 8, borderRadius: 8 },
+  shareBtnText: { color: '#fff', fontSize: 12 },
+  historyCard: { backgroundColor: '#fff', padding: 15, borderRadius: 10, marginBottom: 10, borderLeftWidth: 5, borderLeftColor: '#3498db' },
+  historyDate: { fontSize: 14, fontWeight: 'bold' },
+  historyPain: { fontSize: 14, color: '#e67e22', fontWeight: 'bold' },
+  historyNotes: { fontSize: 13, color: '#7f8c8d', marginTop: 10 },
+  warningText: { fontSize: 12, color: '#e74c3c', fontWeight: 'bold', marginTop: 5 }
 });
 
 registerRootComponent(App);
