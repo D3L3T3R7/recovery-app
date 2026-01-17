@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, ActivityIndicator, Share } from 'react-native';
 import { registerRootComponent } from 'expo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from './firebaseConfig';
@@ -14,12 +14,9 @@ function App() {
   const [sessionNotes, setSessionNotes] = useState('');
   const [assistant, setAssistant] = useState('Self');
   const [painLevel, setPainLevel] = useState(5);
-  
-  // NEW: Exercise Task Selection
   const [activeTask, setActiveTask] = useState('Wrist Rotations');
   const exercises = ['Wrist Rotations', 'Grip Training', 'Arm Stretches', 'Shoulder Mobility'];
 
-  // History & Stats States
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState({ avgPain: 0, totalMins: 0 });
@@ -72,7 +69,6 @@ function App() {
       });
 
       setLogs(fetchedLogs);
-      // Calculate Averages for the "Trend" card
       if (fetchedLogs.length > 0) {
         setStats({
           avgPain: (totalPain / fetchedLogs.length).toFixed(1),
@@ -81,6 +77,29 @@ function App() {
       }
     } catch (e) { Alert.alert("Error", e.message); }
     setLoading(false);
+  };
+
+  // NEW: THE SHARING LOGIC
+  const shareReport = async () => {
+    let reportText = `RECOVERY LOG: ${currentHelper}\n`;
+    reportText += `Generated on: ${new Date().toLocaleDateString()}\n`;
+    reportText += `--------------------------\n`;
+    reportText += `Avg Pain: ${stats.avgPain}/10\n`;
+    reportText += `Total Work: ${stats.totalMins} minutes\n`;
+    reportText += `--------------------------\n\n`;
+
+    logs.forEach(log => {
+      reportText += `${new Date(log.timestamp).toLocaleDateString()} - ${log.taskName}\n`;
+      reportText += `Time: ${log.duration} | Pain: ${log.painLevel}/10\n`;
+      if (log.notes) reportText += `Note: "${log.notes}"\n`;
+      reportText += `\n`;
+    });
+
+    try {
+      await Share.share({ message: reportText });
+    } catch (error) {
+      Alert.alert("Error sharing", error.message);
+    }
   };
 
   const handleTimerAction = async () => {
@@ -113,12 +132,16 @@ function App() {
       <View style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => setView('dashboard')}><Text style={styles.backButton}>← Dashboard</Text></TouchableOpacity>
-          <Text style={styles.title}>Recovery Trends</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={styles.title}>Recovery Trends</Text>
+            <TouchableOpacity style={styles.shareBtn} onPress={shareReport}>
+              <Text style={styles.shareBtnText}>Share Report</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {loading ? <ActivityIndicator size="large" color="#3498db" /> : (
           <ScrollView>
-            {/* NEW: Stats Trend Card */}
             <View style={styles.statsCard}>
               <View style={styles.statBox}>
                 <Text style={styles.statLabel}>Avg Pain</Text>
@@ -134,7 +157,7 @@ function App() {
               <View key={log.id} style={styles.historyCard}>
                 <Text style={styles.historyTask}>{log.taskName}</Text>
                 <Text style={styles.historyDetail}>⏱ {log.duration}  |  🔥 Pain: {log.painLevel}/10</Text>
-                {log.notes ? <Text style={styles.historyNotes}>{log.notes}</Text> : null}
+                {log.notes ? <Text style={styles.historyNotes}>"{log.notes}"</Text> : null}
                 <Text style={styles.historyDate}>{new Date(log.timestamp).toLocaleDateString()}</Text>
               </View>
             ))}
@@ -153,7 +176,6 @@ function App() {
         </View>
       </View>
 
-      {/* Exercise Selection */}
       <Text style={styles.sectionHeader}>1. Select Exercise</Text>
       <View style={styles.helperRow}>
         {exercises.map((ex) => (
@@ -163,7 +185,6 @@ function App() {
         ))}
       </View>
 
-      {/* Timer Card */}
       <View style={[styles.card, { marginTop: 15, alignItems: 'center' }]}>
         <Text style={styles.activeTaskLabel}>Doing: {activeTask}</Text>
         <Text style={styles.timerText}>{formatTime(seconds)}</Text>
@@ -172,7 +193,6 @@ function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Detail Card */}
       <View style={[styles.card, { marginTop: 20 }]}>
         <Text style={styles.cardTitle}>Pain Level & Assistant</Text>
         <View style={styles.painRow}>
@@ -192,7 +212,11 @@ function App() {
         <TextInput style={styles.notesInput} placeholder="How did it feel?" multiline value={sessionNotes} onChangeText={setSessionNotes} />
       </View>
 
-      <View style={{ height: 60 }} />
+      <View style={[styles.card, { marginTop: 20, marginBottom: 50 }]}>
+        <Text style={styles.cardTitle}>Update Settings</Text>
+        <TextInput style={styles.input} value={nameInput} onChangeText={setNameInput} placeholder="Your name..." />
+        <TouchableOpacity style={styles.saveButton} onPress={saveName}><Text style={styles.buttonText}>Save Identity</Text></TouchableOpacity>
+      </View>
     </ScrollView>
   );
 }
@@ -204,6 +228,8 @@ const styles = StyleSheet.create({
   backButton: { color: '#3498db', fontWeight: 'bold', marginBottom: 5 },
   historyBtn: { backgroundColor: '#34495e', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20 },
   historyBtnText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  shareBtn: { backgroundColor: '#27ae60', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15 },
+  shareBtnText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
   sectionHeader: { fontSize: 16, fontWeight: 'bold', color: '#7f8c8d', marginTop: 15 },
   card: { backgroundColor: '#fff', padding: 20, borderRadius: 15, elevation: 4 },
   activeTaskLabel: { fontSize: 14, color: '#3498db', fontWeight: 'bold' },
@@ -223,7 +249,8 @@ const styles = StyleSheet.create({
   helperActive: { backgroundColor: '#95a5a6' },
   helperActiveText: { color: '#fff' },
   notesInput: { backgroundColor: '#f9f9f9', borderRadius: 8, padding: 10, marginTop: 10, height: 50, borderWidth: 1, borderColor: '#eee' },
-  // History / Stats Styles
+  input: { borderWidth: 1, borderColor: '#dcdde1', borderRadius: 8, padding: 10, marginVertical: 10 },
+  saveButton: { backgroundColor: '#95a5a6', padding: 10, borderRadius: 8, alignItems: 'center' },
   statsCard: { backgroundColor: '#fff', borderRadius: 15, padding: 20, flexDirection: 'row', marginBottom: 20, elevation: 4 },
   statBox: { flex: 1, alignItems: 'center' },
   statLabel: { fontSize: 12, color: '#7f8c8d', textTransform: 'uppercase' },
@@ -231,7 +258,7 @@ const styles = StyleSheet.create({
   historyCard: { backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 10, borderLeftWidth: 5, borderLeftColor: '#3498db' },
   historyTask: { fontWeight: 'bold', fontSize: 16 },
   historyDetail: { color: '#7f8c8d', marginTop: 4 },
-  historyNotes: { fontStyle: 'italic', marginTop: 5, color: '#555' },
+  historyNotes: { fontStyle: 'italic', marginTop: 5, color: '#555', backgroundColor: '#f9f9f9', padding: 5 },
   historyDate: { fontSize: 10, color: '#bdc3c7', marginTop: 8, textAlign: 'right' }
 });
 
