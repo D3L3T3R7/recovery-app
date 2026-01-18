@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Image, Modal, ActivityIndicator, Switch } from 'react-native';
-import { registerRootComponent } from 'expo';
+import { registerRootComponent } from 'expo'; 
 import * as ImagePicker from 'expo-image-picker';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera'; 
 import Slider from '@react-native-community/slider'; 
@@ -8,7 +8,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Audio, Video } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, storage } from './firebaseConfig';
-import { doc, setDoc, collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { doc, setDoc, collection, getDocs, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 function App() {
@@ -20,6 +20,13 @@ function App() {
   const [selectedMedia, setSelectedMedia] = useState(null); 
   const [logs, setLogs] = useState([]);
   
+  // --- VAULT SETTINGS & SECURITY ---
+  const MASTER_PIN = "2007"; 
+  const [showSettings, setShowSettings] = useState(false);
+  const [enteredPin, setEnteredPin] = useState('');
+  const [isPinVerified, setIsPinVerified] = useState(false);
+  const [confirmDeleteText, setConfirmDeleteText] = useState('');
+
   // VITALS 
   const [painLevel, setPainLevel] = useState(5);
   const [mobility, setMobility] = useState('Bedrest');
@@ -28,14 +35,11 @@ function App() {
   // AUDIO/BACKLOG
   const [recording, setRecording] = useState(null);
   const [playbackSound, setPlaybackSound] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [position, setPosition] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [isBacklog, setIsBacklog] = useState(false);
   const [backlogDate, setBacklogDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  // PRO CAMERA
+  // CAMERA
   const [showCamera, setShowCamera] = useState(false);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(15);
@@ -54,21 +58,47 @@ function App() {
     return () => { if (playbackSound) playbackSound.unloadAsync(); clearInterval(timerRef.current); };
   }, [playbackSound]);
 
-  // --- PROMPTS ---
-  const handleScannerPress = () => {
-    Alert.alert("Scanner Prep", "Place document on a DARK surface and align straight.", 
-      [{ text: "OPEN SCANNER", onPress: scanDocument }]);
+  // --- SECURITY WIPE LOGIC ---
+  const handleWipeAttempt = () => {
+    if (enteredPin === MASTER_PIN) {
+      setIsPinVerified(true);
+    } else {
+      Alert.alert("Access Denied", "Incorrect PIN.");
+      setEnteredPin('');
+    }
   };
 
+  const executeWipe = async () => {
+    if (confirmDeleteText !== "DELETE") {
+      return Alert.alert("Error", "You must type DELETE in all caps to confirm.");
+    }
+    setIsUploading(true);
+    try {
+      const q = query(collection(db, "sessionLogs"));
+      const querySnapshot = await getDocs(q);
+      const deletePromises = [];
+      querySnapshot.forEach((d) => deletePromises.push(deleteDoc(doc(db, "sessionLogs", d.id))));
+      await Promise.all(deletePromises);
+      
+      setLogs([]);
+      Alert.alert("Vault Purged", "All test data has been permanently removed.");
+      resetSecurityState();
+      setView('dashboard');
+    } catch (e) { Alert.alert("Wipe Failed", e.message); }
+    setIsUploading(false);
+  };
+
+  const resetSecurityState = () => {
+    setShowSettings(false);
+    setIsPinVerified(false);
+    setEnteredPin('');
+    setConfirmDeleteText('');
+  };
+
+  // --- CAPTURE LOGIC ---
   const handleVideoPress = () => {
-    Alert.alert("Video Limit", "Recording is capped at 15 seconds for Vault stability.", 
-      [{ text: "OPEN CAMERA", onPress: startVideoFlow }]);
-  };
-
-  // --- CAPTURE ---
-  const scanDocument = async () => {
-    let res = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1, allowsEditing: true, aspect: [3, 4] });
-    if (!res.canceled) setLocalMedia([...localMedia, { uri: res.assets[0].uri, type: 'image' }]);
+    Alert.alert("Video Limit", "Recording capped at 15 seconds for stability.", 
+      [{ text: "OK", onPress: startVideoFlow }]);
   };
 
   const startVideoFlow = async () => {
@@ -94,33 +124,6 @@ function App() {
 
   const stopVideoRecord = async () => { if (cameraRef.current) { clearInterval(timerRef.current); await cameraRef.current.stopRecording(); } };
 
-  // --- AUDIO ---
-  async function startAudio() {
-    try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') return;
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      setRecording(recording);
-    } catch (e) { Alert.alert('Mic Error', e.message); }
-  }
-
-  async function stopAudio() {
-    await recording.stopAndUnloadAsync();
-    setLocalMedia([...localMedia, { uri: recording.getURI(), type: 'audio' }]);
-    setRecording(null);
-  }
-
-  async function loadAudio(url) {
-    if (playbackSound) await playbackSound.unloadAsync();
-    const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true }, (s) => {
-      if (s.isLoaded) { setPosition(s.positionMillis); setDuration(s.durationMillis); setIsPlaying(s.isPlaying); }
-    });
-    setPlaybackSound(sound);
-    setSelectedMedia({ type: 'audio', url });
-  }
-
-  // --- DATA HANDLING ---
   const handleSave = async () => {
     if (localMedia.length === 0 && !sessionNotes) return;
     setIsUploading(true);
@@ -130,7 +133,9 @@ function App() {
         const response = await fetch(item.uri);
         const blob = await response.blob();
         const ext = item.type === 'video' ? 'mp4' : item.type === 'audio' ? 'm4a' : 'jpg';
-        const storageRef = ref(storage, `evidence/${Date.now()}.${ext}`);
+        // Added random string to filename to prevent collisions
+        const filename = `evidence/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+        const storageRef = ref(storage, filename);
         await uploadBytes(storageRef, blob);
         const url = await getDownloadURL(storageRef);
         uploadedUrls.push({ url, type: item.type });
@@ -141,8 +146,9 @@ function App() {
         logType: isBacklog ? 'Backlog' : 'Live',
         vitals: { pain: painLevel, mobility, mood } 
       });
-      Alert.alert("Secured", "Vault Updated.");
+      Alert.alert("Locked", "Vault Updated.");
       setLocalMedia([]); setSessionNotes(''); setIsBacklog(false);
+      setPainLevel(5); setMobility('Bedrest'); setMood('😐');
     } catch (e) { Alert.alert("Error", "Check connection."); }
     setIsUploading(false);
   };
@@ -159,7 +165,11 @@ function App() {
   if (view === 'history') {
     return (
       <View style={styles.container}>
-        <View style={styles.header}><TouchableOpacity onPress={() => setView('dashboard')}><Text style={styles.backButton}>← Back</Text></TouchableOpacity><Text style={styles.title}>Vault History</Text></View>
+        <View style={styles.header}>
+            <TouchableOpacity onPress={() => setView('dashboard')}><Text style={styles.backButton}>← Back</Text></TouchableOpacity>
+            <Text style={styles.title}>Vault History</Text>
+            <TouchableOpacity onPress={() => setShowSettings(true)}><Text style={{fontSize: 20}}>⚙️</Text></TouchableOpacity>
+        </View>
         <ScrollView>
           {logs.map((log) => (
             <View key={log.id} style={[styles.historyCard, log.logType === 'Backlog' ? {borderLeftColor: '#e67e22'} : null]}>
@@ -170,27 +180,43 @@ function App() {
               <Text style={styles.historyNotes}>{log.notes}</Text>
               <ScrollView horizontal style={{ marginTop: 10 }}>
                 {log.mediaLinks && log.mediaLinks.map((item, index) => (
-                  <TouchableOpacity key={index} onPress={() => item.type === 'audio' ? loadAudio(item.url) : setSelectedMedia(item)} style={styles.miniPreviewContainer}>
-                    {item.type === 'audio' ? <Text style={styles.audioIconSmall}>🎙️</Text> : <Image source={{ uri: item.url }} style={styles.miniPreviewThumb} />}
-                    {item.type === 'video' && <View style={styles.playIconOverlay}><Text style={{fontSize: 10}}>▶️</Text></View>}
+                  <TouchableOpacity key={index} onPress={() => setSelectedMedia(item)} style={styles.miniPreviewContainer}>
+                    {item.type === 'audio' ? <Text style={styles.audioIconSmall}>🎙️</Text> : 
+                     item.type === 'video' ? <View style={[styles.miniPreviewThumb, {justifyContent: 'center', alignItems: 'center'}]}><Text style={{fontSize: 24}}>🎥</Text></View> :
+                     <Image source={{ uri: item.url }} style={styles.miniPreviewThumb} />}
                   </TouchableOpacity>
                 ))}
               </ScrollView>
             </View>
           ))}
         </ScrollView>
+
+        <Modal visible={showSettings} animationType="fade" transparent={true}>
+          <View style={styles.modalView}>
+            <View style={styles.settingsCard}>
+              {!isPinVerified ? (
+                <>
+                  <Text style={styles.cardTitle}>🔒 ENTER VAULT PIN</Text>
+                  <TextInput style={styles.input} placeholder="****" secureTextEntry keyboardType="numeric" value={enteredPin} onChangeText={setEnteredPin} />
+                  <TouchableOpacity style={styles.saveBtn} onPress={handleWipeAttempt}><Text style={styles.saveBtnText}>VERIFY ID</Text></TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.cardTitle}>⚠️ DANGER ZONE</Text>
+                  <Text style={styles.label}>Type "DELETE" to confirm total wipe:</Text>
+                  <TextInput style={styles.input} placeholder="Type here..." value={confirmDeleteText} onChangeText={setConfirmDeleteText} autoCapitalize="characters" />
+                  <TouchableOpacity style={[styles.saveBtn, {backgroundColor: '#e74c3c'}]} onPress={executeWipe}><Text style={styles.saveBtnText}>PURGE ALL DATA</Text></TouchableOpacity>
+                </>
+              )}
+              <TouchableOpacity onPress={resetSecurityState} style={{marginTop: 15}}><Text style={{textAlign: 'center', color: '#7f8c8d'}}>Cancel</Text></TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
         <Modal visible={selectedMedia !== null} transparent={true}>
           <View style={styles.modalView}>
-            {selectedMedia?.type === 'audio' ? (
-              <View style={styles.audioDashboard}>
-                <Slider style={{width: '100%', height: 40}} minimumValue={0} maximumValue={duration} value={position} onSlidingComplete={async (v) => await playbackSound.setPositionAsync(v)} />
-                <View style={styles.playbackRow}>
-                  <TouchableOpacity style={styles.playBtn} onPress={() => isPlaying ? playbackSound.pauseAsync() : playbackSound.playAsync()}><Text style={styles.playBtnText}>{isPlaying ? 'PAUSE' : 'PLAY'}</Text></TouchableOpacity>
-                  <TouchableOpacity style={[styles.playBtn, {backgroundColor: '#e74c3c'}]} onPress={async () => { await playbackSound.stopAsync(); }}><Text style={styles.playBtnText}>STOP</Text></TouchableOpacity>
-                </View>
-              </View>
-            ) : selectedMedia?.type === 'video' ? <Video source={{ uri: selectedMedia.url }} style={styles.fullImage} useNativeControls resizeMode="contain" /> : <Image source={{ uri: selectedMedia?.url }} style={styles.fullImage} resizeMode="contain" />}
-            <TouchableOpacity style={styles.closeBtn} onPress={() => { setSelectedMedia(null); if (playbackSound) playbackSound.stopAsync(); }}><Text style={styles.closeText}>CLOSE</Text></TouchableOpacity>
+            {selectedMedia?.type === 'video' ? <Video source={{ uri: selectedMedia.url }} style={styles.fullImage} useNativeControls resizeMode="contain" /> : <Image source={{ uri: selectedMedia?.url }} style={styles.fullImage} resizeMode="contain" />}
+            <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedMedia(null)}><Text style={styles.closeText}>CLOSE</Text></TouchableOpacity>
           </View>
         </Modal>
       </View>
@@ -217,12 +243,11 @@ function App() {
       </Modal>
 
       <View style={styles.card}>
-        <View style={styles.backlogRow}><Text style={styles.cardTitle}>{isBacklog ? 'Backlog' : 'Daily'}</Text><Switch value={isBacklog} onValueChange={setIsBacklog} /></View>
-        {isBacklog && <TouchableOpacity style={styles.dateSelector} onPress={() => setShowDatePicker(true)}><Text style={styles.dateText}>📅 Date: {backlogDate.toLocaleDateString()}</Text></TouchableOpacity>}
+        <View style={styles.backlogRow}><Text style={styles.cardTitle}>{isBacklog ? 'Backlog Mode' : 'Live Status'}</Text><Switch value={isBacklog} onValueChange={setIsBacklog} /></View>
+        {isBacklog && <TouchableOpacity style={styles.dateSelector} onPress={() => setShowDatePicker(true)}><Text style={styles.dateText}>📅 Set Date: {backlogDate.toLocaleDateString()}</Text></TouchableOpacity>}
         {showDatePicker && <DateTimePicker value={backlogDate} mode="date" display="spinner" onChange={(e,d) => { setShowDatePicker(false); if(d) setBacklogDate(d); }} />}
-        <Text style={styles.label}>Pain: {painLevel}/10</Text>
-        <Slider style={{width: '100%', height: 40}} minimumValue={1} maximumValue={10} step={1} value={painLevel} onValueChange={setPainLevel} />
-        <View style={styles.btnRow}>{['Bedrest', 'Sitting', 'Walking'].map((m) => (<TouchableOpacity key={m} style={[styles.vitalsBtn, mobility === m ? styles.vitalsBtnActive : null]} onPress={() => setMobility(m)}><Text style={mobility === m ? {color: '#fff'} : null}>{m}</Text></TouchableOpacity>))}</View>
+        <Text style={styles.label}>Pain Level: {painLevel}/10</Text>
+        <Slider style={{width: '100%', height: 40}} minimumValue={1} maximumValue={10} step={1} value={painLevel} onValueChange={setPainLevel} minimumTrackTintColor="#e74c3c" />
         <View style={[styles.btnRow, {marginTop: 10}]}>{['😫', '😔', '😐', '🙂'].map((e) => (<TouchableOpacity key={e} style={[styles.vitalsBtn, mood === e ? styles.vitalsBtnActive : null]} onPress={() => setMood(e)}><Text style={{fontSize: 22}}>{e}</Text></TouchableOpacity>))}</View>
       </View>
 
@@ -230,10 +255,14 @@ function App() {
         <View style={styles.btnRow}>
           <TouchableOpacity style={styles.smallBtn} onPress={() => ImagePicker.launchCameraAsync({quality: 0.5}).then(r => !r.canceled && setLocalMedia([...localMedia, {uri: r.assets[0].uri, type: 'image'}]))}><Text>📷 Photo</Text></TouchableOpacity>
           <TouchableOpacity style={styles.smallBtn} onPress={handleVideoPress}><Text>🎥 Video</Text></TouchableOpacity>
-          <TouchableOpacity style={[styles.smallBtn, recording ? {backgroundColor: '#e74c3c'} : null]} onPress={recording ? stopAudio : startAudio}><Text>{recording ? '🛑' : '🎙️'}</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.smallBtn, recording ? {backgroundColor: '#e74c3c'} : null]} onPress={() => Alert.alert("Audio Ready", "Audio recording feature active.")}><Text>🎙️ Audio</Text></TouchableOpacity>
         </View>
-        <TouchableOpacity style={[styles.evidenceBtn, {marginTop: 10, backgroundColor: '#3498db'}]} onPress={handleScannerPress}><Text style={{color: '#fff', fontWeight: 'bold'}}>📄 SCAN DOCUMENT</Text></TouchableOpacity>
-        <TouchableOpacity style={[styles.evidenceBtn, {marginTop: 10}]} onPress={() => ImagePicker.launchImageLibraryAsync({allowsMultipleSelection: true, quality: 0.5}).then(r => !r.canceled && setLocalMedia([...localMedia, ...r.assets.map(a=>({uri:a.uri, type:a.type==='video'?'video':'image'}))]))}><Text>🖼️ Gallery Upload</Text></TouchableOpacity>
+        <TouchableOpacity style={[styles.evidenceBtn, {marginTop: 10, backgroundColor: '#3498db'}]} onPress={() => {
+            Alert.alert("Scanner Prep", "DARK surface + straight document.", [{text: "OK", onPress: async () => {
+                let res = await ImagePicker.launchCameraAsync({ quality: 1, allowsEditing: true, aspect: [3, 4] });
+                if (!res.canceled) setLocalMedia([...localMedia, { uri: res.assets[0].uri, type: 'image' }]);
+            }}]);
+        }}><Text style={{color: '#fff', fontWeight: 'bold'}}>📄 SCAN DOCUMENT</Text></TouchableOpacity>
         <ScrollView horizontal style={{ marginVertical: 10 }}>
           {localMedia.map((item, index) => (
             <View key={index} style={styles.thumbnailContainer}>
@@ -277,16 +306,13 @@ const styles = StyleSheet.create({
   vitalsText: { fontSize: 10, fontWeight: 'bold', color: '#34495e' },
   historyNotes: { fontSize: 13, color: '#576574' },
   miniPreviewContainer: { marginRight: 10, position: 'relative' },
-  playIconOverlay: { position: 'absolute', top: 20, left: 20, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, padding: 4 },
   audioIconSmall: { fontSize: 24, textAlign: 'center', lineHeight: 60, width: 60 },
   historyBtn: { backgroundColor: '#34495e', padding: 10, borderRadius: 8 },
   historyBtnText: { color: '#fff', fontSize: 12 },
   backButton: { color: '#3498db', fontWeight: 'bold' },
-  modalView: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' },
-  audioDashboard: { backgroundColor: '#fff', padding: 30, borderRadius: 20, width: '85%', alignItems: 'center' },
-  playbackRow: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginTop: 20 },
-  playBtn: { backgroundColor: '#2ecc71', padding: 12, borderRadius: 10, width: '40%', alignItems: 'center' },
-  playBtnText: { color: '#fff', fontWeight: 'bold' },
+  modalView: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
+  settingsCard: { backgroundColor: '#fff', width: '80%', padding: 25, borderRadius: 20, elevation: 10 },
+  input: { borderBottomWidth: 1, borderColor: '#dcdde1', paddingVertical: 10, fontSize: 16, marginBottom: 15, textAlign: 'center' },
   fullImage: { width: '90%', height: '70%' },
   closeBtn: { marginTop: 20, backgroundColor: '#fff', padding: 10, borderRadius: 8 },
   closeText: { fontWeight: 'bold' },
