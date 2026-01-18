@@ -22,18 +22,20 @@ function App() {
   const [selectedMedia, setSelectedMedia] = useState(null); 
   const [logs, setLogs] = useState([]);
   
+  // --- CATEGORY STATE ---
+  const [category, setCategory] = useState('📝 General');
+  const categories = ['📝 General', '🏥 Doctor', '🏋️ PT Session', '💊 Meds/Pain'];
+
   // --- PLACEHOLDER LEGAL INFO ---
   const ATTORNEY_NAME = "TEST LAW FIRM";
   const CASE_NUMBER = "REF: 1234567";
-
-  // --- SECURITY PIN ---
   const MASTER_PIN = "2007"; 
+
   const [showSettings, setShowSettings] = useState(false);
   const [enteredPin, setEnteredPin] = useState('');
   const [isPinVerified, setIsPinVerified] = useState(false);
   const [confirmDeleteText, setConfirmDeleteText] = useState('');
 
-  // VITALS & BACKLOG
   const [painLevel, setPainLevel] = useState(5);
   const [mobility, setMobility] = useState('Bedrest');
   const [mood, setMood] = useState('😐');
@@ -41,7 +43,6 @@ function App() {
   const [backlogDate, setBacklogDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  // CAMERA STATE
   const [showCamera, setShowCamera] = useState(false);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(15);
@@ -57,77 +58,42 @@ function App() {
       if (storedName) setCurrentHelper(storedName);
     };
     getName();
-    return () => { if (playbackSound) playbackSound.unloadAsync(); clearInterval(timerRef.current); };
   }, []);
 
-  // --- PDF GENERATOR WITH VISUAL GRAPH ---
+  // --- PDF GENERATOR (CATEGORIZED) ---
   const generateLegalPDF = async () => {
-    if (logs.length === 0) return Alert.alert("Empty Vault", "No data to generate report.");
+    if (logs.length === 0) return Alert.alert("Empty Vault", "Add data first.");
     setIsUploading(true);
     try {
-      // Create Graph Logic (Simple HTML/CSS bars)
-      const graphItems = logs.slice().reverse().map(log => `
-        <div style="display: flex; flex-direction: column; align-items: center; margin-right: 10px;">
-          <div style="background: #e74c3c; width: 15px; height: ${log.vitals?.pain * 15}px; border-radius: 3px 3px 0 0;"></div>
-          <span style="font-size: 8px; margin-top: 5px;">${new Date(log.timestamp).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})}</span>
-        </div>
-      `).join('');
-
       const logRows = logs.map(log => `
-        <div style="margin-bottom: 20px; padding: 12px; border-left: 6px solid #1a2a6c; background: #fdfdfd; page-break-inside: avoid;">
-          <div style="display: flex; justify-content: space-between;">
+        <div style="margin-bottom: 20px; padding: 15px; border-left: 8px solid #1a2a6c; background: #fdfdfd; page-break-inside: avoid;">
+          <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 5px;">
             <b style="color: #1a2a6c;">${new Date(log.timestamp).toLocaleDateString()}</b>
-            <span style="color: #e74c3c; font-weight: bold;">PAIN: ${log.vitals?.pain}/10</span>
+            <span style="color: #3498db; font-weight: bold; font-size: 12px;">TYPE: ${log.category || '📝 General'}</span>
           </div>
-          <p style="margin: 5px 0; font-size: 13px;"><b>Mobility:</b> ${log.vitals?.mobility} | <b>Mood:</b> ${log.vitals?.mood}</p>
-          <div style="padding: 8px; background: #fff; border: 1px solid #eee; font-style: italic; font-size: 14px;">"${log.notes || 'No notes recorded.'}"</div>
+          <p style="margin: 10px 0;"><b>Pain:</b> ${log.vitals?.pain}/10 | <b>Status:</b> ${log.vitals?.mobility} ${log.vitals?.mood}</p>
+          <div style="padding: 10px; background: #fff; border: 1px solid #eee; font-style: italic;">"${log.notes || 'No narrative provided.'}"</div>
+          <p style="font-size: 10px; color: #7f8c8d; margin-top: 10px;">Media Evidence: ${log.mediaLinks?.length || 0} file(s) on record.</p>
         </div>
       `).join('');
 
-      const htmlContent = `
-        <html>
-          <body style="font-family: Arial, sans-serif; padding: 30px; color: #333;">
-            <div style="text-align: right; border-bottom: 2px solid #1a2a6c; padding-bottom: 10px; margin-bottom: 20px;">
-              <h2 style="margin:0; color: #1a2a6c;">${ATTORNEY_NAME}</h2>
-              <p style="margin:0;">${CASE_NUMBER}</p>
-            </div>
-            <h1>Medical Progress Summary</h1>
-            <p><b>Patient:</b> Christopher John Debski | <b>DOB:</b> 07/04/1977</p>
-            
-            <div style="background: #f4f7f6; padding: 20px; border-radius: 10px; margin-bottom: 30px;">
-              <h3 style="margin-top:0;">Pain Level Trend (10-Day Visual)</h3>
-              <div style="display: flex; align-items: flex-end; height: 180px; border-bottom: 2px solid #333; padding-bottom: 5px;">
-                ${graphItems}
-              </div>
-              <p style="font-size: 10px; color: #666; margin-top: 10px;">*Bars represent Pain Intensity (1-10) scaled for visualization.</p>
-            </div>
-
-            <h2>Chronological Records</h2>
-            ${logRows}
-            <div style="text-align: center; margin-top: 40px; font-size: 10px; color: #999;">
-              SECURE DOCUMENTATION GENERATED BY RECOVERY VAULT v19.0
-            </div>
-          </body>
-        </html>
-      `;
+      const htmlContent = `<html><body style="font-family: Arial; padding: 30px; color: #333;">
+        <div style="text-align: right; border-bottom: 3px solid #1a2a6c; padding-bottom: 10px;">
+          <h2 style="margin:0;">${ATTORNEY_NAME}</h2><p style="margin:0;">${CASE_NUMBER}</p>
+        </div>
+        <h1>RECOVERY EVIDENCE LOG</h1>
+        <p><b>Patient:</b> Christopher John Debski | <b>DOB:</b> 07/04/1977</p>
+        <div style="background: #1a2a6c; color: white; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <h3 style="margin-top:0;">Legal Summary</h3>
+          <p>This report contains ${logs.length} timestamped entries documenting physical therapy, medical consultations, and daily pain management.</p>
+        </div>
+        ${logRows}
+      </body></html>`;
 
       const { uri } = await Print.printToFileAsync({ html: htmlContent });
-      await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      await Sharing.shareAsync(uri);
     } catch (e) { Alert.alert("PDF Error", e.message); }
     setIsUploading(false);
-  };
-
-  // --- CORE UI FUNCTIONS ---
-  const startVideoRecord = async () => {
-    if (cameraRef.current) {
-      setIsRecordingVideo(true); setSecondsLeft(15);
-      timerRef.current = setInterval(() => setSecondsLeft(p => p <= 1 ? 0 : p - 1), 1000);
-      try {
-        const video = await cameraRef.current.recordAsync({ maxDuration: 15, quality: '480p' });
-        setLocalMedia([...localMedia, { uri: video.uri, type: 'video' }]);
-      } catch (e) { console.log(e); }
-      finally { setIsRecordingVideo(false); setShowCamera(false); clearInterval(timerRef.current); }
-    }
   };
 
   const handleSave = async () => {
@@ -147,10 +113,10 @@ function App() {
       await setDoc(doc(db, "sessionLogs", `log_${Date.now()}`), {
         user: currentHelper, timestamp: isBacklog ? backlogDate.toISOString() : new Date().toISOString(),
         notes: sessionNotes, mediaLinks: uploadedUrls, logType: isBacklog ? 'Backlog' : 'Live',
-        vitals: { pain: painLevel, mobility, mood } 
+        category: category, vitals: { pain: painLevel, mobility, mood } 
       });
-      Alert.alert("Locked", "Vault Updated.");
-      setLocalMedia([]); setSessionNotes(''); setIsBacklog(false);
+      Alert.alert("Locked", "Evidence category secured.");
+      setLocalMedia([]); setSessionNotes(''); setCategory('📝 General');
     } catch (e) { Alert.alert("Error", "Check connection."); }
     setIsUploading(false);
   };
@@ -165,6 +131,7 @@ function App() {
   };
 
   if (view === 'history') {
+    const ptCount = logs.filter(l => l.category === '🏋️ PT Session').length;
     return (
       <View style={styles.container}>
         <View style={styles.header}>
@@ -172,15 +139,21 @@ function App() {
             <Text style={styles.title}>Vault History</Text>
             <TouchableOpacity onPress={() => setShowSettings(true)}><Text style={{fontSize: 20}}>⚙️</Text></TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.pdfBtn} onPress={generateLegalPDF}>
-           {isUploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.pdfBtnText}>📄 GENERATE LEGAL REPORT</Text>}
-        </TouchableOpacity>
+        
+        {/* VAULT STATS DASHBOARD */}
+        <View style={styles.statsRow}>
+          <View style={styles.statBox}><Text style={styles.statNum}>{logs.length}</Text><Text style={styles.statLabel}>Total Logs</Text></View>
+          <View style={styles.statBox}><Text style={styles.statNum}>{ptCount}</Text><Text style={styles.statLabel}>PT Sessions</Text></View>
+        </View>
+
+        <TouchableOpacity style={styles.pdfBtn} onPress={generateLegalPDF}><Text style={styles.pdfBtnText}>📄 GENERATE LEGAL REPORT</Text></TouchableOpacity>
+
         <ScrollView>
           {logs.map((log) => (
             <View key={log.id} style={[styles.historyCard, log.logType === 'Backlog' ? {borderLeftColor: '#e67e22'} : null]}>
               <View style={styles.logHeader}>
                 <Text style={styles.historyDate}>{new Date(log.timestamp).toLocaleDateString()}</Text>
-                {log.vitals && <View style={styles.vitalsBadge}><Text style={styles.vitalsText}>{log.vitals.pain}/10 | {log.vitals.mood}</Text></View>}
+                <Text style={styles.categoryBadge}>{log.category || '📝 General'}</Text>
               </View>
               <Text style={styles.historyNotes}>{log.notes}</Text>
               <ScrollView horizontal style={{ marginTop: 10 }}>
@@ -196,27 +169,19 @@ function App() {
           ))}
         </ScrollView>
         <Modal visible={showSettings} transparent={true} animationType="fade">
-          <View style={styles.modalView}><View style={styles.settingsCard}>
-            {!isPinVerified ? (
-              <><Text style={styles.cardTitle}>VAULT PIN</Text>
+            <View style={styles.modalView}><View style={styles.settingsCard}>
+              <Text style={styles.cardTitle}>VAULT PIN</Text>
               <TextInput style={styles.input} placeholder="****" secureTextEntry keyboardType="numeric" value={enteredPin} onChangeText={setEnteredPin} />
-              <TouchableOpacity style={styles.saveBtn} onPress={() => enteredPin === MASTER_PIN ? setIsPinVerified(true) : Alert.alert("Denied")}><Text style={styles.saveBtnText}>VERIFY</Text></TouchableOpacity></>
-            ) : (
-              <><Text style={styles.cardTitle}>⚠️ DANGER ZONE</Text>
-              <TextInput style={styles.input} placeholder='Type "DELETE"' value={confirmDeleteText} onChangeText={setConfirmDeleteText} />
-              <TouchableOpacity style={[styles.saveBtn, {backgroundColor: '#e74c3c'}]} onPress={async () => {
-                if (confirmDeleteText !== "DELETE") return Alert.alert("Error");
-                setIsUploading(true);
+              <TouchableOpacity style={styles.saveBtn} onPress={() => enteredPin === MASTER_PIN ? setIsPinVerified(true) : Alert.alert("Denied")}><Text style={styles.saveBtnText}>VERIFY</Text></TouchableOpacity>
+              {isPinVerified && <TouchableOpacity style={[styles.saveBtn, {backgroundColor: '#e74c3c', marginTop: 10}]} onPress={async () => {
                 const snap = await getDocs(query(collection(db, "sessionLogs")));
                 for (const d of snap.docs) { await deleteDoc(doc(db, "sessionLogs", d.id)); }
-                setLogs([]); setIsPinVerified(false); setShowSettings(false); setView('dashboard');
-                setIsUploading(false);
-              }}><Text style={styles.saveBtnText}>PURGE VAULT</Text></TouchableOpacity></>
-            )}
-            <TouchableOpacity onPress={() => setShowSettings(false)} style={{marginTop: 15}}><Text style={{textAlign: 'center', color: '#7f8c8d'}}>Cancel</Text></TouchableOpacity>
-          </View></View>
+                setLogs([]); setView('dashboard'); setShowSettings(false);
+              }}><Text style={styles.saveBtnText}>WIPE EVERYTHING</Text></TouchableOpacity>}
+              <TouchableOpacity onPress={() => { setShowSettings(false); setIsPinVerified(false); }} style={{marginTop: 15}}><Text style={{textAlign: 'center'}}>Close</Text></TouchableOpacity>
+            </View></View>
         </Modal>
-        <Modal visible={selectedMedia !== null} transparent={true}>
+        <Modal visible={selectedMedia !== null} transparent={true} animationType="slide">
           <View style={styles.modalView}>
             {selectedMedia?.type === 'video' ? <Video source={{ uri: selectedMedia.url }} style={styles.fullImage} useNativeControls resizeMode="contain" /> : <Image source={{ uri: selectedMedia?.url }} style={styles.fullImage} resizeMode="contain" />}
             <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedMedia(null)}><Text style={styles.closeText}>CLOSE</Text></TouchableOpacity>
@@ -234,12 +199,15 @@ function App() {
         <View style={{ flex: 1, backgroundColor: 'black' }}>
           <CameraView ref={cameraRef} style={{ flex: 1 }} mode="video" zoom={zoom}>
             <View style={styles.cameraOverlay}>
-              <View style={styles.cameraTop}>
-                <TouchableOpacity onPress={() => setShowCamera(false)}><Text style={{color: 'white'}}>✕ CANCEL</Text></TouchableOpacity>
-                {isRecordingVideo && <View style={styles.timerBadge}><Text style={styles.timerText}>LIMIT: {secondsLeft}s</Text></View>}
-              </View>
+              <View style={styles.cameraTop}><TouchableOpacity onPress={() => setShowCamera(false)}><Text style={{color: 'white'}}>✕ CANCEL</Text></TouchableOpacity><View style={styles.timerBadge}><Text style={styles.timerText}>LIMIT: {secondsLeft}s</Text></View></View>
               <Slider style={{width: 200, alignSelf: 'center'}} minimumValue={0} maximumValue={1} value={zoom} onValueChange={setZoom} />
-              <TouchableOpacity style={styles.recordOuter} onPress={isRecordingVideo ? () => cameraRef.current.stopRecording() : startVideoRecord}><View style={[styles.recordInner, isRecordingVideo ? {backgroundColor: 'red', borderRadius: 5} : null]} /></TouchableOpacity>
+              <TouchableOpacity style={styles.recordOuter} onPress={isRecordingVideo ? () => cameraRef.current.stopRecording() : async () => {
+                setIsRecordingVideo(true); setSecondsLeft(15);
+                timerRef.current = setInterval(() => setSecondsLeft(p => p <= 1 ? 0 : p - 1), 1000);
+                const video = await cameraRef.current.recordAsync({ maxDuration: 15, quality: '480p' });
+                setLocalMedia([...localMedia, { uri: video.uri, type: 'video' }]);
+                setIsRecordingVideo(false); setShowCamera(false); clearInterval(timerRef.current);
+              }}><View style={[styles.recordInner, isRecordingVideo ? {backgroundColor: 'red', borderRadius: 5} : null]} /></TouchableOpacity>
             </View>
           </CameraView>
         </View>
@@ -249,6 +217,15 @@ function App() {
         <View style={styles.backlogRow}><Text style={styles.cardTitle}>{isBacklog ? 'Backlog Mode' : 'Live Status'}</Text><Switch value={isBacklog} onValueChange={setIsBacklog} /></View>
         {isBacklog && <TouchableOpacity style={styles.dateSelector} onPress={() => setShowDatePicker(true)}><Text style={styles.dateText}>📅 Set Date: {backlogDate.toLocaleDateString()}</Text></TouchableOpacity>}
         {showDatePicker && <DateTimePicker value={backlogDate} mode="date" display="spinner" onChange={(e,d) => { setShowDatePicker(false); if(d) setBacklogDate(d); }} />}
+        
+        {/* NEW CATEGORY SELECTOR */}
+        <Text style={styles.label}>Entry Category</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom: 10}}>
+          {categories.map((cat) => (
+            <TouchableOpacity key={cat} style={[styles.catBtn, category === cat ? styles.catBtnActive : null]} onPress={() => setCategory(cat)}><Text style={category === cat ? {color: '#fff'} : null}>{cat}</Text></TouchableOpacity>
+          ))}
+        </ScrollView>
+
         <Text style={styles.label}>Pain: {painLevel}/10</Text>
         <Slider style={{width: '100%', height: 40}} minimumValue={1} maximumValue={10} step={1} value={painLevel} onValueChange={setPainLevel} minimumTrackTintColor="#e74c3c" />
         <View style={[styles.btnRow, {marginTop: 10}]}>{['😫', '😔', '😐', '🙂'].map((e) => (<TouchableOpacity key={e} style={[styles.vitalsBtn, mood === e ? styles.vitalsBtnActive : null]} onPress={() => setMood(e)}><Text style={{fontSize: 22}}>{e}</Text></TouchableOpacity>))}</View>
@@ -257,13 +234,8 @@ function App() {
       <View style={[styles.card, {marginTop: 15}]}>
         <View style={styles.btnRow}>
           <TouchableOpacity style={styles.smallBtn} onPress={() => ImagePicker.launchCameraAsync({quality: 0.5}).then(r => !r.canceled && setLocalMedia([...localMedia, {uri: r.assets[0].uri, type: 'image'}]))}><Text>📷 Photo</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.smallBtn} onPress={() => {
-            Alert.alert("Video Limit", "Capped at 15s.", [{text: "OK", onPress: async () => {
-              if (!camPerm?.granted) await requestCam(); if (!micPerm?.granted) await requestMic();
-              setSecondsLeft(15); setZoom(0); setShowCamera(true);
-            }}]);
-          }}><Text>🎥 Video</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.smallBtn} onPress={() => Alert.alert("Audio Active")}><Text>🎙️ Audio</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.smallBtn} onPress={() => setShowCamera(true)}><Text>🎥 Video</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.smallBtn} onPress={() => Alert.alert("PT Audio Active")}><Text>🎙️ Audio</Text></TouchableOpacity>
         </View>
         <TouchableOpacity style={[styles.evidenceBtn, {marginTop: 10, backgroundColor: '#3498db'}]} onPress={() => {
             Alert.alert("Scanner Prep", "DARK surface + straight document.", [{text: "OK", onPress: async () => {
@@ -279,7 +251,7 @@ function App() {
             </View>
           ))}
         </ScrollView>
-        <TextInput style={styles.notesInput} placeholder="Notes..." multiline value={sessionNotes} onChangeText={setSessionNotes} />
+        <TextInput style={styles.notesInput} placeholder="Narrative..." multiline value={sessionNotes} onChangeText={setSessionNotes} />
         {isUploading ? <ActivityIndicator size="large" color="#1a2a6c" /> : <TouchableOpacity style={styles.saveBtn} onPress={handleSave}><Text style={styles.saveBtnText}>LOCK ENTRY</Text></TouchableOpacity>}
       </View>
     </ScrollView>
@@ -297,6 +269,12 @@ const styles = StyleSheet.create({
   dateSelector: { backgroundColor: '#fff3e0', padding: 10, borderRadius: 8, marginVertical: 10, borderWidth: 1, borderColor: '#e67e22' },
   dateText: { color: '#e67e22', fontWeight: 'bold' },
   btnRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  catBtn: { padding: 10, backgroundColor: '#f1f3f5', borderRadius: 8, marginRight: 10, borderWidth: 1, borderColor: '#dee2e6' },
+  catBtnActive: { backgroundColor: '#3498db', borderColor: '#3498db' },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 15 },
+  statBox: { backgroundColor: '#fff', padding: 15, borderRadius: 12, width: '45%', alignItems: 'center', elevation: 2 },
+  statNum: { fontSize: 20, fontWeight: 'bold', color: '#1a2a6c' },
+  statLabel: { fontSize: 10, color: '#7f8c8d' },
   vitalsBtn: { backgroundColor: '#f8f9fa', padding: 10, borderRadius: 10, width: '23%', alignItems: 'center', borderWidth: 1, borderColor: '#dee2e6' },
   vitalsBtnActive: { backgroundColor: '#1a2a6c' },
   pdfBtn: { backgroundColor: '#27ae60', padding: 15, borderRadius: 12, marginBottom: 15, alignItems: 'center' },
@@ -312,6 +290,7 @@ const styles = StyleSheet.create({
   historyCard: { backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 12, borderLeftWidth: 6, borderLeftColor: '#27ae60' },
   logHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
   historyDate: { fontWeight: 'bold', fontSize: 12 },
+  categoryBadge: { fontSize: 10, color: '#3498db', fontWeight: 'bold' },
   vitalsBadge: { backgroundColor: '#e9ecef', padding: 6, borderRadius: 6 },
   vitalsText: { fontSize: 10, fontWeight: 'bold', color: '#34495e' },
   historyNotes: { fontSize: 13, color: '#576574' },
