@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Image, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, TextInput, Image, Modal, ActivityIndicator, Linking } from 'react-native';
 import { registerRootComponent } from 'expo';
 import * as ImagePicker from 'expo-image-picker';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import { Video } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, storage } from './firebaseConfig';
@@ -13,6 +12,7 @@ function App() {
   const [view, setView] = useState('dashboard');
   const [currentHelper, setCurrentHelper] = useState('Chris');
   const [sessionNotes, setSessionNotes] = useState('');
+  const [videoLink, setVideoLink] = useState(''); // NEW: External Video Link state
   const [isUploading, setIsUploading] = useState(false);
   
   const [localMedia, setLocalMedia] = useState([]); 
@@ -27,76 +27,45 @@ function App() {
     getName();
   }, []);
 
-  const generateThumbnail = async (videoUri) => {
-    try {
-      const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 1000 });
-      return uri;
-    } catch (e) { console.warn(e); return null; }
-  };
-
   const removeMedia = (indexToRemove) => {
     setLocalMedia(localMedia.filter((_, index) => index !== indexToRemove));
   };
 
-  // NEW: Handle multiple selections
   const pickMedia = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      allowsMultipleSelection: true, // ENABLED MULTI-SELECT
-      selectionLimit: 10, // Cap at 10 at a time for stability
-      quality: 1,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images, // Optimized for photos primarily
+      allowsMultipleSelection: true,
+      selectionLimit: 15,
+      quality: 0.8, // Slightly lower for faster upload on shaky connections
     });
 
     if (!result.canceled) {
-      const newItems = [];
-      for (const asset of result.assets) {
-        let thumbnail = null;
-        if (asset.type === 'video') {
-          thumbnail = await generateThumbnail(asset.uri);
-        }
-        newItems.push({ uri: asset.uri, type: asset.type, thumbnail });
-      }
+      const newItems = result.assets.map(asset => ({ uri: asset.uri, type: asset.type }));
       setLocalMedia([...localMedia, ...newItems]);
     }
   };
 
   const takePhoto = async () => {
-    let result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 1 });
+    let result = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8 });
     if (!result.canceled) {
-      setLocalMedia([...localMedia, { uri: result.assets[0].uri, type: result.assets[0].type, thumbnail: null }]);
-    }
-  };
-
-  const recordVideo = async () => {
-    let result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-      videoMaxDuration: 60,
-      quality: 1,
-    });
-    if (!result.canceled) {
-      const asset = result.assets[0];
-      const thumbnail = await generateThumbnail(asset.uri);
-      setLocalMedia([...localMedia, { uri: asset.uri, type: asset.type, thumbnail }]);
+      setLocalMedia([...localMedia, { uri: result.assets[0].uri, type: result.assets[0].type }]);
     }
   };
 
   const handleSave = async () => {
-    if (localMedia.length === 0 && !sessionNotes) return;
+    if (localMedia.length === 0 && !sessionNotes && !videoLink) return;
     setIsUploading(true);
     try {
       const uploadedUrls = [];
       for (const item of localMedia) {
-        // REVERTED TO SIMPLER UPLOAD METHOD (More reliable on bad connections for smaller files)
         const response = await fetch(item.uri);
         const blob = await response.blob();
-
-        const extension = item.type === 'video' ? 'mp4' : 'jpg';
-        const filename = `evidence/${Date.now()}_${Math.random().toString(36).substring(7)}.${extension}`;
+        const filename = `evidence/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
         const storageRef = ref(storage, filename);
         
         await uploadBytes(storageRef, blob);
         const url = await getDownloadURL(storageRef);
-        uploadedUrls.push({ url, type: item.type });
+        uploadedUrls.push({ url, type: 'image' });
       }
 
       const logId = `log_${Date.now()}`;
@@ -104,15 +73,15 @@ function App() {
         user: currentHelper,
         timestamp: new Date().toISOString(),
         notes: sessionNotes,
+        externalVideo: videoLink, // Save the Google Drive link
         mediaLinks: uploadedUrls,
-        logType: 'Media Evidence'
+        logType: 'Professional Evidence'
       });
 
-      Alert.alert("Vault Locked", "Evidence has been securely uploaded.");
-      setLocalMedia([]);
-      setSessionNotes('');
+      Alert.alert("Locked in Vault", "High-res photos and links secured.");
+      setLocalMedia([]); setSessionNotes(''); setVideoLink('');
     } catch (e) { 
-      Alert.alert("Upload Error", `Connection failed. Details: ${e.message}`); 
+      Alert.alert("Upload Error", "Connection timed out. Try fewer photos at once."); 
     }
     setIsUploading(false);
   };
@@ -138,33 +107,30 @@ function App() {
             <View key={log.id} style={styles.historyCard}>
               <Text style={styles.historyDate}>{new Date(log.timestamp).toLocaleDateString('en-CA')}</Text>
               <Text style={styles.historyNotes}>"{log.notes}"</Text>
+              
+              {log.externalVideo ? (
+                <TouchableOpacity style={styles.linkBtn} onPress={() => Linking.openURL(log.externalVideo)}>
+                  <Text style={styles.linkBtnText}>🔗 Open Linked Video Evidence</Text>
+                </TouchableOpacity>
+              ) : null}
+
               <ScrollView horizontal style={{ marginTop: 10 }}>
                 {log.mediaLinks && log.mediaLinks.map((item, index) => (
                   <TouchableOpacity key={index} onPress={() => setSelectedMedia(item)}>
-                    {item.type === 'video' ? (
-                      <View style={styles.videoContainer}>
-                        <Video source={{ uri: item.url }} style={styles.miniPreview} resizeMode="cover" shouldPlay={false} isMuted={true} />
-                        <View style={styles.playIconOverlay}><Text style={styles.playIcon}>▶️</Text></View>
-                      </View>
-                    ) : (
-                      <Image source={{ uri: item.url }} style={styles.miniPreview} />
-                    )}
+                    <Image source={{ uri: item.url }} style={styles.miniPreview} />
                   </TouchableOpacity>
                 ))}
               </ScrollView>
             </View>
           ))}
+          <View style={{height: 60}} />
         </ScrollView>
 
         <Modal visible={selectedMedia !== null} transparent={true}>
           <View style={styles.modalView}>
-            {selectedMedia?.type === 'video' ? (
-              <Video source={{ uri: selectedMedia.url }} useNativeControls shouldPlay style={styles.fullImage} resizeMode="contain" />
-            ) : (
-              <Image source={{ uri: selectedMedia?.url }} style={styles.fullImage} resizeMode="contain" />
-            )}
+            <Image source={{ uri: selectedMedia?.url }} style={styles.fullImage} resizeMode="contain" />
             <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedMedia(null)}>
-              <Text style={styles.closeText}>CLOSE MEDIA</Text>
+              <Text style={styles.closeText}>CLOSE PHOTO</Text>
             </TouchableOpacity>
           </View>
         </Modal>
@@ -180,24 +146,18 @@ function App() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Attach Evidence</Text>
-        <View style={styles.evidenceRow}>
-          <TouchableOpacity style={styles.evidenceBtn} onPress={takePhoto}><Text>📷 Take Photo</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.evidenceBtn} onPress={recordVideo}><Text>🎥 Record Video</Text></TouchableOpacity>
-        </View>
-        <TouchableOpacity style={[styles.evidenceBtn, {width: '100%', marginTop: 10}]} onPress={pickMedia}><Text>🖼️ Open Gallery (Multi-Select)</Text></TouchableOpacity>
+        <Text style={styles.cardTitle}>Capture New Evidence</Text>
+        <TouchableOpacity style={[styles.evidenceBtn, {width: '100%', marginBottom: 10}]} onPress={takePhoto}>
+          <Text>📷 Take Evidence Photo</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.evidenceBtn, {width: '100%'}]} onPress={pickMedia}>
+          <Text>🖼️ Photo Dump (Multi-Select Gallery)</Text>
+        </TouchableOpacity>
 
         <ScrollView horizontal style={{ marginVertical: 15 }}>
           {localMedia.map((item, index) => (
             <View key={index} style={styles.thumbnailContainer}>
-              {item.type === 'video' ? (
-                <View style={styles.videoContainer}>
-                  <Image source={{ uri: item.thumbnail }} style={styles.miniPreview} />
-                  <View style={styles.playIconOverlay}><Text style={styles.playIcon}>▶️</Text></View>
-                </View>
-              ) : (
-                <Image source={{ uri: item.uri }} style={styles.miniPreview} />
-              )}
+              <Image source={{ uri: item.uri }} style={styles.miniPreview} />
               <TouchableOpacity style={styles.deleteButton} onPress={() => removeMedia(index)}>
                 <Text style={styles.deleteButtonText}>✕</Text>
               </TouchableOpacity>
@@ -205,19 +165,24 @@ function App() {
           ))}
         </ScrollView>
 
-        <TextInput style={styles.notesInput} placeholder="Add details..." multiline value={sessionNotes} onChangeText={setSessionNotes} />
+        <Text style={styles.cardTitle}>Large Video Link (Google Drive/OneDrive)</Text>
+        <TextInput style={styles.input} placeholder="Paste shareable video link here..." value={videoLink} onChangeText={setVideoLink} />
+
+        <Text style={[styles.cardTitle, {marginTop: 15}]}>Detailed Evidence Notes</Text>
+        <TextInput style={styles.notesInput} placeholder="Add specific details for your lawyer..." multiline value={sessionNotes} onChangeText={setSessionNotes} />
         
         {isUploading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#1a2a6c" />
-            <Text style={styles.loadingText}>Uploading evidence to secure vault...</Text>
+            <Text style={styles.loadingText}>Uploading high-res evidence...</Text>
           </View>
         ) : (
           <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-            <Text style={styles.saveBtnText}>UPLOAD TO CLOUD VAULT</Text>
+            <Text style={styles.saveBtnText}>LOCK IN EVIDENCE VAULT</Text>
           </TouchableOpacity>
         )}
       </View>
+      <View style={{height: 60}} />
     </ScrollView>
   );
 }
@@ -225,23 +190,22 @@ function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f2f5', padding: 20 },
   header: { marginTop: 60, marginBottom: 20, flexDirection: 'row', justifyContent: 'space-between' },
-  title: { fontSize: 22, fontWeight: 'bold' },
+  title: { fontSize: 22, fontWeight: 'bold', color: '#1a2a6c' },
   backButton: { color: '#3498db', fontWeight: 'bold' },
   card: { backgroundColor: '#fff', padding: 15, borderRadius: 12, elevation: 3 },
-  cardTitle: { fontSize: 13, fontWeight: 'bold', color: '#34495e', marginBottom: 10 },
-  evidenceRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  evidenceBtn: { backgroundColor: '#ecf0f1', padding: 15, borderRadius: 10, width: '48%', alignItems: 'center', justifyContent: 'center' },
+  cardTitle: { fontSize: 13, fontWeight: 'bold', color: '#34495e', marginBottom: 5 },
+  input: { borderBottomWidth: 1, borderColor: '#dcdde1', paddingVertical: 8, fontSize: 14, marginBottom: 10 },
+  evidenceBtn: { backgroundColor: '#ecf0f1', padding: 15, borderRadius: 10, alignItems: 'center' },
   thumbnailContainer: { position: 'relative', marginRight: 15, marginTop: 5 },
   miniPreview: { width: 100, height: 100, borderRadius: 8, backgroundColor: '#eee' },
-  videoContainer: { position: 'relative', width: 100, height: 100 },
   deleteButton: { position: 'absolute', top: -8, right: -8, backgroundColor: '#e74c3c', width: 22, height: 22, borderRadius: 11, justifyContent: 'center', alignItems: 'center', zIndex: 10, borderWidth: 1.5, borderColor: '#fff' },
   deleteButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 10 },
-  playIconOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 8 },
-  playIcon: { fontSize: 30 },
-  notesInput: { backgroundColor: '#f9f9f9', borderRadius: 8, padding: 10, height: 60, marginTop: 10 },
+  notesInput: { backgroundColor: '#f9f9f9', borderRadius: 8, padding: 10, height: 80, marginTop: 5 },
   saveBtn: { backgroundColor: '#1a2a6c', padding: 15, borderRadius: 10, alignItems: 'center', marginTop: 15 },
   saveBtnText: { color: '#fff', fontWeight: 'bold' },
-  loadingContainer: { alignItems: 'center', marginTop: 15, height: 50, justifyContent: 'center' },
+  linkBtn: { backgroundColor: '#f1f2f6', padding: 10, borderRadius: 8, marginVertical: 10, borderWidth: 1, borderColor: '#3498db' },
+  linkBtnText: { color: '#3498db', fontWeight: 'bold', fontSize: 13 },
+  loadingContainer: { alignItems: 'center', marginTop: 15 },
   loadingText: { marginTop: 10, color: '#7f8c8d', fontWeight: 'bold' },
   historyBtn: { backgroundColor: '#34495e', padding: 8, borderRadius: 8 },
   historyBtnText: { color: '#fff', fontSize: 12 },
