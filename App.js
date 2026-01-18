@@ -22,6 +22,10 @@ function App() {
   const [selectedMedia, setSelectedMedia] = useState(null); 
   const [logs, setLogs] = useState([]);
   
+  // --- PLACEHOLDER LEGAL INFO ---
+  const ATTORNEY_NAME = "TEST LAW FIRM";
+  const CASE_NUMBER = "REF: 1234567";
+
   // --- SECURITY PIN ---
   const MASTER_PIN = "2007"; 
   const [showSettings, setShowSettings] = useState(false);
@@ -29,17 +33,15 @@ function App() {
   const [isPinVerified, setIsPinVerified] = useState(false);
   const [confirmDeleteText, setConfirmDeleteText] = useState('');
 
-  // VITALS 
+  // VITALS & BACKLOG
   const [painLevel, setPainLevel] = useState(5);
   const [mobility, setMobility] = useState('Bedrest');
   const [mood, setMood] = useState('😐');
-
-  // AUDIO/BACKLOG/CAMERA
-  const [recording, setRecording] = useState(null);
-  const [playbackSound, setPlaybackSound] = useState(null);
   const [isBacklog, setIsBacklog] = useState(false);
   const [backlogDate, setBacklogDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // CAMERA STATE
   const [showCamera, setShowCamera] = useState(false);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(15);
@@ -56,28 +58,58 @@ function App() {
     };
     getName();
     return () => { if (playbackSound) playbackSound.unloadAsync(); clearInterval(timerRef.current); };
-  }, [playbackSound]);
+  }, []);
 
-  // --- PDF GENERATOR ---
-  const generatePDF = async () => {
+  // --- PDF GENERATOR WITH VISUAL GRAPH ---
+  const generateLegalPDF = async () => {
+    if (logs.length === 0) return Alert.alert("Empty Vault", "No data to generate report.");
     setIsUploading(true);
     try {
-      const logRows = logs.map(log => `
-        <div style="margin-bottom: 15px; padding: 10px; border-left: 4px solid #1a2a6c; background: #f4f7f6;">
-          <h3 style="margin: 0;">${new Date(log.timestamp).toLocaleDateString()}</h3>
-          <p><b>Pain:</b> ${log.vitals?.pain}/10 | <b>Status:</b> ${log.vitals?.mobility} ${log.vitals?.mood}</p>
-          <p><i>"${log.notes}"</i></p>
+      // Create Graph Logic (Simple HTML/CSS bars)
+      const graphItems = logs.slice().reverse().map(log => `
+        <div style="display: flex; flex-direction: column; align-items: center; margin-right: 10px;">
+          <div style="background: #e74c3c; width: 15px; height: ${log.vitals?.pain * 15}px; border-radius: 3px 3px 0 0;"></div>
+          <span style="font-size: 8px; margin-top: 5px;">${new Date(log.timestamp).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})}</span>
         </div>
       `).join('');
 
-      const htmlContent = `<html><body style="font-family: Helvetica; padding: 30px;">
-        <h1 style="color: #1a2a6c; border-bottom: 2px solid #1a2a6c;">Recovery Progress Report</h1>
-        <p><b>Patient:</b> Christopher John Debski | <b>Generated:</b> ${new Date().toLocaleDateString()}</p>
-        <div style="background: #1a2a6c; color: white; padding: 15px; border-radius: 5px; margin: 20px 0;">
-          <h2>Summary</h2><p>Formal medical & legal documentation of recovery events.</p>
+      const logRows = logs.map(log => `
+        <div style="margin-bottom: 20px; padding: 12px; border-left: 6px solid #1a2a6c; background: #fdfdfd; page-break-inside: avoid;">
+          <div style="display: flex; justify-content: space-between;">
+            <b style="color: #1a2a6c;">${new Date(log.timestamp).toLocaleDateString()}</b>
+            <span style="color: #e74c3c; font-weight: bold;">PAIN: ${log.vitals?.pain}/10</span>
+          </div>
+          <p style="margin: 5px 0; font-size: 13px;"><b>Mobility:</b> ${log.vitals?.mobility} | <b>Mood:</b> ${log.vitals?.mood}</p>
+          <div style="padding: 8px; background: #fff; border: 1px solid #eee; font-style: italic; font-size: 14px;">"${log.notes || 'No notes recorded.'}"</div>
         </div>
-        ${logRows}
-      </body></html>`;
+      `).join('');
+
+      const htmlContent = `
+        <html>
+          <body style="font-family: Arial, sans-serif; padding: 30px; color: #333;">
+            <div style="text-align: right; border-bottom: 2px solid #1a2a6c; padding-bottom: 10px; margin-bottom: 20px;">
+              <h2 style="margin:0; color: #1a2a6c;">${ATTORNEY_NAME}</h2>
+              <p style="margin:0;">${CASE_NUMBER}</p>
+            </div>
+            <h1>Medical Progress Summary</h1>
+            <p><b>Patient:</b> Christopher John Debski | <b>DOB:</b> 07/04/1977</p>
+            
+            <div style="background: #f4f7f6; padding: 20px; border-radius: 10px; margin-bottom: 30px;">
+              <h3 style="margin-top:0;">Pain Level Trend (10-Day Visual)</h3>
+              <div style="display: flex; align-items: flex-end; height: 180px; border-bottom: 2px solid #333; padding-bottom: 5px;">
+                ${graphItems}
+              </div>
+              <p style="font-size: 10px; color: #666; margin-top: 10px;">*Bars represent Pain Intensity (1-10) scaled for visualization.</p>
+            </div>
+
+            <h2>Chronological Records</h2>
+            ${logRows}
+            <div style="text-align: center; margin-top: 40px; font-size: 10px; color: #999;">
+              SECURE DOCUMENTATION GENERATED BY RECOVERY VAULT v19.0
+            </div>
+          </body>
+        </html>
+      `;
 
       const { uri } = await Print.printToFileAsync({ html: htmlContent });
       await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
@@ -85,7 +117,19 @@ function App() {
     setIsUploading(false);
   };
 
-  // --- CORE FUNCTIONS ---
+  // --- CORE UI FUNCTIONS ---
+  const startVideoRecord = async () => {
+    if (cameraRef.current) {
+      setIsRecordingVideo(true); setSecondsLeft(15);
+      timerRef.current = setInterval(() => setSecondsLeft(p => p <= 1 ? 0 : p - 1), 1000);
+      try {
+        const video = await cameraRef.current.recordAsync({ maxDuration: 15, quality: '480p' });
+        setLocalMedia([...localMedia, { uri: video.uri, type: 'video' }]);
+      } catch (e) { console.log(e); }
+      finally { setIsRecordingVideo(false); setShowCamera(false); clearInterval(timerRef.current); }
+    }
+  };
+
   const handleSave = async () => {
     if (localMedia.length === 0 && !sessionNotes) return;
     setIsUploading(true);
@@ -107,7 +151,7 @@ function App() {
       });
       Alert.alert("Locked", "Vault Updated.");
       setLocalMedia([]); setSessionNotes(''); setIsBacklog(false);
-    } catch (e) { Alert.alert("Error", "Save failed."); }
+    } catch (e) { Alert.alert("Error", "Check connection."); }
     setIsUploading(false);
   };
 
@@ -120,25 +164,17 @@ function App() {
     setLogs(fetched);
   };
 
-  const executeWipe = async () => {
-    if (confirmDeleteText !== "DELETE") return Alert.alert("Error", "Type DELETE to confirm.");
-    setIsUploading(true);
-    const q = query(collection(db, "sessionLogs"));
-    const snap = await getDocs(q);
-    for (const d of snap.docs) { await deleteDoc(doc(db, "sessionLogs", d.id)); }
-    setLogs([]); setIsPinVerified(false); setShowSettings(false); setView('dashboard');
-    setIsUploading(false);
-  };
-
   if (view === 'history') {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => setView('dashboard')}><Text style={styles.backButton}>← Back</Text></TouchableOpacity>
-          <Text style={styles.title}>Vault History</Text>
-          <TouchableOpacity onPress={() => setShowSettings(true)}><Text style={{fontSize: 20}}>⚙️</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setView('dashboard')}><Text style={styles.backButton}>← Back</Text></TouchableOpacity>
+            <Text style={styles.title}>Vault History</Text>
+            <TouchableOpacity onPress={() => setShowSettings(true)}><Text style={{fontSize: 20}}>⚙️</Text></TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.pdfBtn} onPress={generatePDF}><Text style={styles.pdfBtnText}>📄 GENERATE LEGAL REPORT</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.pdfBtn} onPress={generateLegalPDF}>
+           {isUploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.pdfBtnText}>📄 GENERATE LEGAL REPORT</Text>}
+        </TouchableOpacity>
         <ScrollView>
           {logs.map((log) => (
             <View key={log.id} style={[styles.historyCard, log.logType === 'Backlog' ? {borderLeftColor: '#e67e22'} : null]}>
@@ -168,7 +204,14 @@ function App() {
             ) : (
               <><Text style={styles.cardTitle}>⚠️ DANGER ZONE</Text>
               <TextInput style={styles.input} placeholder='Type "DELETE"' value={confirmDeleteText} onChangeText={setConfirmDeleteText} />
-              <TouchableOpacity style={[styles.saveBtn, {backgroundColor: '#e74c3c'}]} onPress={executeWipe}><Text style={styles.saveBtnText}>PURGE VAULT</Text></TouchableOpacity></>
+              <TouchableOpacity style={[styles.saveBtn, {backgroundColor: '#e74c3c'}]} onPress={async () => {
+                if (confirmDeleteText !== "DELETE") return Alert.alert("Error");
+                setIsUploading(true);
+                const snap = await getDocs(query(collection(db, "sessionLogs")));
+                for (const d of snap.docs) { await deleteDoc(doc(db, "sessionLogs", d.id)); }
+                setLogs([]); setIsPinVerified(false); setShowSettings(false); setView('dashboard');
+                setIsUploading(false);
+              }}><Text style={styles.saveBtnText}>PURGE VAULT</Text></TouchableOpacity></>
             )}
             <TouchableOpacity onPress={() => setShowSettings(false)} style={{marginTop: 15}}><Text style={{textAlign: 'center', color: '#7f8c8d'}}>Cancel</Text></TouchableOpacity>
           </View></View>
@@ -196,13 +239,7 @@ function App() {
                 {isRecordingVideo && <View style={styles.timerBadge}><Text style={styles.timerText}>LIMIT: {secondsLeft}s</Text></View>}
               </View>
               <Slider style={{width: 200, alignSelf: 'center'}} minimumValue={0} maximumValue={1} value={zoom} onValueChange={setZoom} />
-              <TouchableOpacity style={styles.recordOuter} onPress={isRecordingVideo ? () => cameraRef.current.stopRecording() : async () => {
-                setIsRecordingVideo(true); setSecondsLeft(15);
-                timerRef.current = setInterval(() => setSecondsLeft(p => p <= 1 ? 0 : p - 1), 1000);
-                const video = await cameraRef.current.recordAsync({ maxDuration: 15, quality: '480p' });
-                setLocalMedia([...localMedia, { uri: video.uri, type: 'video' }]);
-                setIsRecordingVideo(false); setShowCamera(false); clearInterval(timerRef.current);
-              }}><View style={[styles.recordInner, isRecordingVideo ? {backgroundColor: 'red', borderRadius: 5} : null]} /></TouchableOpacity>
+              <TouchableOpacity style={styles.recordOuter} onPress={isRecordingVideo ? () => cameraRef.current.stopRecording() : startVideoRecord}><View style={[styles.recordInner, isRecordingVideo ? {backgroundColor: 'red', borderRadius: 5} : null]} /></TouchableOpacity>
             </View>
           </CameraView>
         </View>
@@ -226,7 +263,7 @@ function App() {
               setSecondsLeft(15); setZoom(0); setShowCamera(true);
             }}]);
           }}><Text>🎥 Video</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.smallBtn} onPress={() => Alert.alert("Audio Ready")}><Text>🎙️ Audio</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.smallBtn} onPress={() => Alert.alert("Audio Active")}><Text>🎙️ Audio</Text></TouchableOpacity>
         </View>
         <TouchableOpacity style={[styles.evidenceBtn, {marginTop: 10, backgroundColor: '#3498db'}]} onPress={() => {
             Alert.alert("Scanner Prep", "DARK surface + straight document.", [{text: "OK", onPress: async () => {
